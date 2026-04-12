@@ -1,283 +1,117 @@
 # Bookclub
 
-## PKNIC Full-stack Coding Interview
+PKNIC-style **book club discovery**: users describe genre, goals, and cadence; the API recommends a club from a **Supabase-backed** catalog. Includes an **Add book club** flow to seed rows.
 
-Welcome to the PKNIC coding interview!
+**Planned extension:** semantic match via **embeddings** and optional **RAG** (see [Roadmap: embeddings & RAG](#roadmap-embeddings--rag)).
 
-This interview will be conducted as a **pair programming session** with a senior software engineer, either virtually (on-site via video call) or in person at our office. You'll work together to implement the solution, discussing your approach and decisions along the way.
+---
 
-## Challenge Overview
+## Stack
 
-Your task is to build a **recommended bookclub discovery** that allows users to find bookclubs that matches best with customer information, preferences, and taste.
+| Layer | Tech |
+|--------|------|
+| UI | React 18, TypeScript, Vite, Tailwind, React Router |
+| API | Python 3.10+, FastAPI, Uvicorn |
+| Data | Supabase Postgres (`book_clubs`; service role used **only** on the server) |
 
-**This repository implements the challenge with React (Vite + TypeScript) and a Python (FastAPI) backend.** The original prompt referenced `pknic-react` + Node; here the API is under `/api/*` on port **8000** (see below).
+---
 
-### Requirements
-
-Build a form with the following fields:
-
-1. **Book Search** (Combobox with search)
-   - Implement a searchable combobox/autocomplete component
-   - This will be optional field (users can skip this)
-   - Fetch books from the backend API: `GET /api/books?q=<search-query>`
-   - Display book names in the dropdown
-   - Allow user to select a book
-
-2. **Book Genre** (Text input)
-   - Required field
-
-3. **User Goal** (Text input)
-   - Required field
-
-4. **Cadence** (Number input)
-   - Required field
-   - Must be greater than 0
-   - At most two decimal places
-
-5. **Submit**
-   - Send POST request to **`/api/recommendations`** with all form data (discovery match against the Supabase catalog)
-   - Handle success/error states appropriately
-
-There is also an **Add book club** tab (`/addBookClub`) that **`POST /api/bookclubs`** to insert a new row in Supabase (same service-role pattern as Givy’s server-side Supabase client — **never** put the service key in frontend code).
-
-## What We're Assessing
-
-Your solution will be evaluated on:
-
-### 1. Component Architecture
-
-- How you break down the form into smaller, reusable components
-- Separation of concerns
-- Component composition and props design
-
-### 2. Validation
-
-- Form field validation (required fields, value ranges)
-- User-friendly error messages
-- Validation timing (on blur, on submit, etc.)
-
-### 3. Testing
-
-- **Unit tests** for business logic (especially calculation functions)
-- **Interaction tests** using Testing Library and/or Playwright
-- Test user workflows (typing, selecting, submitting)
-- Extract computation logic from components and unit test it
-- You can use Testing Library for component tests, Playwright for E2E, or both!
-
-### 4. Accessibility
-
-- Proper ARIA labels and roles
-- Keyboard navigation support
-- Screen reader friendly
-- Form error announcements
-
-### 5. Semantic HTML
-
-- Use appropriate HTML elements (`<form>`, `<label>`, `<input>`, etc.)
-- Proper form structure
-- Meaningful element choices
-
-### 6. Styling
-
-- Match the Figma design (it's OK not to use exact colours and font)
-- Clean and polished UI
-- Use Tailwind CSS utilities effectively or plain CSS
-
-### 7. Problem-Solving Approach
-
-- How you break down the problem into smaller chunks
-- Implementation order and priorities
-- Code organization and file structure
-
-## Incremental steps
-
-For this challenge, we expect you to implement the form incrementally, testing each step as you go.
-
-- Implement the book search combobox (`GET /api/books`)
-- Implement validation (required fields, cadence rules)
-- Implement submission (`POST /api/recommendations`) and success UI
-
-## Structure (this repo)
-
-- **`client/`** — React + Vite + TypeScript + Tailwind (`/` discovery, `/addBookClub` create)
-- **`server/`** — FastAPI (`main.py`, `bookclub_repository.py`, `recommendation.py`, `supabase_schema.sql`)
-- **Catalog data** — stored in **Supabase** (`book_clubs` table). `bookclub_data.py` is kept only as a legacy reference (e.g. Java port), not used at runtime.
-
-## Getting Started
-
-### 1. Install dependencies
-
-```bash
-cd client
-npm install
-```
-
-From the repo root you can also run:
-
-```bash
-npm run install:all
-```
-
-### 2. Python environment (API on port 8000)
-
-```bash
-cd server
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2b. Supabase
-
-1. In the Supabase SQL editor, run **`server/supabase_schema.sql`** to create `book_clubs`.
-2. Copy **`server/.env.example`** → **`server/.env`** and set **`SUPABASE_URL`** and **`SUPABASE_SERVICE_KEY`** (service role — server only).
-
-### 3. Run the backend
-
-In **`server/`** (with venv activated):
-
-```bash
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
-```
-
-Or from the **repo root**:
-
-```bash
-npm run dev:backend
-```
-
-### 4. Run the React app
-
-In another terminal:
-
-```bash
-cd client
-npm run dev
-```
-
-Or from the **repo root**:
-
-```bash
-npm run dev:react
-```
-
-Open **`http://127.0.0.1:5173`** (HTTP, not HTTPS). Vite proxies `/api/*` to the FastAPI server.
-
-## Available Commands
-
-From the **repo root**:
-
-```bash
-npm run dev:backend    # FastAPI on http://127.0.0.1:8000
-npm run dev:react      # Vite on http://127.0.0.1:5173
-npm run build:react    # Production build of the client
-npm run test:react     # Vitest (client)
-npm run test:backend   # pytest (server)
-npm run test:all       # Both
-```
-
-## Backend API Reference
-
-Base URL in development: **`http://127.0.0.1:8000`**
-
-### 1. Search books (combobox)
+## Layout
 
 ```
-GET /api/books?q=<search-query>
+client/          # Vite app — `/` discovery, `/addBookClub` create
+server/          # FastAPI — `/api/*`, loads `server/.env`
+server/supabase_schema.sql   # Run once in Supabase SQL editor
 ```
 
-Omit `q` or use an empty query to return the full catalog list.
+Legacy reference only (not used at runtime): `server/bookclub_data.py`, `server/bookclub_data.java`.
 
-**Example:**
+---
 
-```bash
-curl "http://127.0.0.1:8000/api/books?q=cartographer"
-```
+## Setup
 
-**Example response:**
+1. **Client**
 
-```json
-[
-  { "id": "550e8400-e29b-41d4-a716-446655440000", "name": "The Cartographer's Wife" }
-]
-```
+   ```bash
+   cd client && npm install
+   ```
 
-Ids are **UUIDs** from Supabase.
+2. **Server**
 
-### 2. Discovery (recommend a club)
+   ```bash
+   cd server
+   python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
 
-```
-POST /api/recommendations
-Content-Type: application/json
-```
+3. **Supabase**
 
-**Request body:**
+   - Run `server/supabase_schema.sql` in the **SQL Editor** (creates `book_clubs`).
+   - Copy `server/.env.example` → `server/.env` and set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` (service role — never commit, never expose to the browser).
 
-```json
-{
-  "bookCode": "550e8400-e29b-41d4-a716-446655440000",
-  "bookGenre": "Historical fiction",
-  "userGoal": "what kind of book club the user is looking for",
-  "cadence": 2
-}
-```
+4. **Run** (two terminals)
 
-`bookCode` is optional (omit or `null` if the user did not pick a book). If set, it should match a catalog club `id` (UUID string).
+   ```bash
+   # API — http://127.0.0.1:8000
+   cd server && source .venv/bin/activate && uvicorn main:app --reload --host 127.0.0.1 --port 8000
+   ```
 
-**Response:**
+   ```bash
+   # UI — http://127.0.0.1:5173  (proxies /api → 8000)
+   cd client && npm run dev
+   ```
 
-```json
-{
-  "bookCode": "550e8400-e29b-41d4-a716-446655440000",
-  "bookLeaderName": "Elena Marquez",
-  "bookName": "The Cartographer's Wife",
-  "bookClubName": "The Cartographer's Wife",
-  "bookGenre": "Historical fiction",
-  "bookSummary": "In 1920s Lisbon, …",
-  "userGoal": "what kind of book club the user is looking for",
-  "cadence": 2,
-  "totalPreference": 1.0
-}
-```
+Use **http** (not https) for local URLs.
 
-**Scoring:** `totalPreference = 0.3 * cadence + 0.5 * genreMatch`, where `genreMatch` is how closely the user’s **bookGenre** matches the recommended club’s genre (0–1). The server ranks rows from **`book_clubs`** using **userGoal** against each club’s summary (and boosts if **bookCode** matches that club’s id).
+---
 
-### 3. Create a book club row (admin / demo)
+## Scripts (repo root)
 
-```
-POST /api/bookclubs
-Content-Type: application/json
-```
+| Command | Purpose |
+|---------|---------|
+| `npm run dev:backend` | FastAPI on :8000 |
+| `npm run dev:react` | Vite on :5173 |
+| `npm run build:react` | Production build of `client/` |
+| `npm run test:react` | Vitest |
+| `npm run test:backend` | pytest |
+| `npm run test:all` | Both |
 
-**Request body:**
+---
 
-```json
-{
-  "leader": "Elena Marquez",
-  "genre": "Historical fiction",
-  "bookTitle": "The Cartographer's Wife",
-  "bookSummary": "In 1920s Lisbon, …"
-}
-```
+## API
 
-**Response:** `{ "id": "<uuid>", "leader": "...", "genre": "...", "bookTitle": "...", "bookSummary": "..." }`
+Base URL (dev): `http://127.0.0.1:8000`
 
-### 4. List all clubs
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/health` | Liveness; includes whether Supabase env vars are set |
+| GET | `/api/books?q=` | Book titles for the combobox (`q` optional) |
+| POST | `/api/recommendations` | Discovery: body `bookCode?`, `bookGenre`, `userGoal`, `cadence` → best match + `totalPreference` |
+| POST | `/api/bookclubs` | Create a club (`leader`, `genre`, `bookTitle`, `bookSummary`) |
+| GET | `/api/bookclubs` | List clubs (newest first) |
 
-```
-GET /api/bookclubs
-```
+**Current matching** (`server/recommendation.py`): combines genre overlap, goal text overlap vs club summary, optional boost if `bookCode` matches a club id. Score: `totalPreference = 0.3 × cadence + 0.5 × genreMatch` vs the chosen club’s genre.
 
-Returns `{ "bookclubs": [ ... ] }` from Supabase (newest first).
+OpenAPI: with the server running, see `/docs`.
 
-## Tips for Success
+---
 
-1. **Use TDD**: Write tests first! Start with a failing test, make it pass, then refactor
-2. **Extract Logic**: Keep business logic (calculations, validation) separate from components
-3. **Test Strategy**:
-   - Unit tests for pure functions and business logic
-   - Component tests for user interactions
-4. **Accessibility**: Consider keyboard navigation and screen readers from the start
-5. **Component Breakdown**: Think about reusable components (TextField, NumberField, Combobox, etc.)
+## Roadmap: embeddings & RAG
 
-Good luck!
+This repo is structured so you can add **semantic retrieval** without rewriting the whole stack.
+
+| Direction | Idea |
+|-----------|------|
+| **Embeddings API** | New route e.g. `POST /api/embeddings/query` or `POST /api/match-semantic`: embed user text + club documents (title, genre, summary), rank by cosine similarity (Supabase **pgvector** or stored vectors). |
+| **Data** | Add an `embedding vector` column (or side table) for each club row; refresh on create/update; optional background job for backfill. |
+| **RAG (optional)** | Retrieve top‑k club chunks, then **constrained** LLM output (pick `id` from catalog + short rationale). Keep deterministic fallbacks (rule-based or embedding-only). |
+| **Eval** | Golden queries + metrics (e.g. recall@k, MRR) in `server/eval/` or CI; compare embedding model / prompt changes. |
+| **Secrets** | Embedding provider API keys only in `server/.env` (same pattern as `SUPABASE_*`). |
+
+**Today:** matching is lexical/rule-based. **Next:** swap or blend with embedding scores behind a small service layer so the FastAPI surface stays stable.
+
+---
+
+## License
+
+Use for learning and interviews; adjust license as needed for your org.
