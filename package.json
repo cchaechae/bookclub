@@ -1,0 +1,13 @@
+{
+  "name": "bookclub",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install --prefix client",
+    "dev:backend": "cd server && .venv/bin/uvicorn main:app --reload --host 127.0.0.1 --port 8000",
+    "dev:react": "npm run dev --prefix client",
+    "build:react": "npm run build --prefix client",
+    "test:react": "npm run test --prefix client",
+    "test:backend": "cd server && .venv/bin/pytest -q",
+    "test:all": "npm run test:react && npm run test:backend"
+  }
+}

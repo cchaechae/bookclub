@@ -1,0 +1,16 @@
+# Python
+.venv/
+server/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+client/dist/
+
+# OS / editor
+.DS_Store
+.env
+.env.local
