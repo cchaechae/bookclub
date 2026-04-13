@@ -8,6 +8,7 @@ export function AppTabBar() {
   const { pathname } = useLocation();
   const isDiscovery = pathname === "/";
   const isAdd = pathname === "/addBookClub";
+  const isOnboarding = pathname === "/onboarding";
 
   return (
     <div
@@ -46,6 +47,17 @@ export function AppTabBar() {
         onClick={() => navigate("/addBookClub")}
       >
         Add book club
+      </button>
+      <button
+        type="button"
+        className={`${base} ${
+          isOnboarding
+            ? "bg-accent text-white ring-2 ring-accent/30"
+            : "bg-white text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50"
+        }`}
+        onClick={() => navigate("/onboarding")}
+      >
+        Chat onboarding
       </button>
     </div>
   );

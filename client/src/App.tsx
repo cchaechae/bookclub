@@ -2,6 +2,8 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { AppTabBar } from "./components/AppTabBar";
 import { AddBookClubPage } from "./pages/AddBookClubPage";
 import { DiscoveryPage } from "./pages/DiscoveryPage";
+import { MatchesPage } from "./pages/MatchesPage";
+import Onboarding from "./pages/Onboarding";
 
 export default function App() {
   return (
@@ -25,6 +27,8 @@ export default function App() {
               </div>
             }
           />
+          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/matches" element={<MatchesPage />} />
         </Routes>
       </div>
     </BrowserRouter>

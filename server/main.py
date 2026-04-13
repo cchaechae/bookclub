@@ -18,8 +18,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from bookclub_repository import insert_club, is_configured, list_clubs
 from recommendation import genre_match_score, pick_best_club, total_preference
+from routers.onboarding import router as onboarding_router
 
 app = FastAPI(title="Bookclub API")
+app.include_router(onboarding_router)
 
 app.add_middleware(
     CORSMiddleware,
