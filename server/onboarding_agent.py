@@ -82,7 +82,13 @@ TOOLS = [
 
 # ── Core agent function ──────────────────────────────────────────────────────
 
-def chat_turn(session_id: str, history: list[dict], user_message: str) -> dict:
+def chat_turn(
+    session_id: str,
+    history: list[dict],
+    user_message: str,
+    *,
+    user_id: str | None = None,
+) -> dict:
     """
     Process one conversational turn.
 
@@ -114,7 +120,7 @@ def chat_turn(session_id: str, history: list[dict], user_message: str) -> dict:
     if message.tool_calls:
         tool_call = message.tool_calls[0]
         profile_data = json.loads(tool_call.function.arguments)
-        profile_id = _save_profile(session_id, profile_data)
+        profile_id = _save_profile(session_id, profile_data, user_id=user_id)
 
         # Append the assistant's tool-call message, then the tool result
         history.append(message)
@@ -167,18 +173,22 @@ def _embed(text: str) -> list[float]:
     return response.data[0].embedding
 
 
-def _save_profile(session_id: str, profile: dict) -> str:
+def _save_profile(session_id: str, profile: dict, *, user_id: str | None = None) -> str:
     """Embed the profile and insert into Supabase user_profiles table."""
     profile_text = _build_profile_string(profile)
     embedding = _embed(profile_text)
 
-    result = supabase.table("user_profiles").insert({
+    row: dict = {
         "session_id": session_id,
         "preferred_genres": profile.get("preferred_genres", []),
         "reading_goal": profile.get("reading_goal", ""),
         "cadence": profile.get("cadence", ""),
         "freetext": profile.get("freetext", ""),
         "embedding": embedding,
-    }).execute()
+    }
+    if user_id:
+        row["user_id"] = user_id
+
+    result = supabase.table("user_profiles").insert(row).execute()
 
     return result.data[0]["id"]

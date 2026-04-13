@@ -1,21 +1,36 @@
 """
 FastAPI router for the onboarding quiz agent.
-Mount this in server/main.py with:
-    from routers.onboarding import router as onboarding_router
-    app.include_router(onboarding_router)
+Persists chat in Supabase `chat_sessions`; requires `X-User-Email` (normalized, from localStorage).
 """
 
-from fastapi import APIRouter
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
+
+from bookclub_repository import is_configured
 from onboarding_agent import chat_turn
+from onboarding_repository import (
+    get_chat_session,
+    history_to_ui_messages,
+    insert_chat_session,
+    jsonify_chat_messages,
+    last_assistant_reply,
+    normalize_email,
+    save_chat_session,
+    upsert_user_by_email,
+)
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 
-# In-memory session store.
-# For production swap with Redis:
-#   from redis import Redis
-#   r = Redis(host="localhost"); r.set(session_id, json.dumps(history))
-_sessions: dict[str, list] = {}
+
+def get_user_email(x_user_email: str | None = Header(None, alias="X-User-Email")) -> str:
+    if not x_user_email or not str(x_user_email).strip():
+        raise HTTPException(status_code=401, detail="Missing X-User-Email header.")
+    email = normalize_email(str(x_user_email))
+    if "@" not in email or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Invalid email.")
+    return email
 
 
 class ChatRequest(BaseModel):
@@ -24,32 +39,66 @@ class ChatRequest(BaseModel):
 
 
 @router.get("/start/{session_id}")
-def start_session(session_id: str):
+def start_session(session_id: str, email: str = Depends(get_user_email)):
     """
-    Initialize a new session and return the agent's opening message.
-    Call this when the onboarding UI mounts.
+    Initialize or resume a session. Client sends stable session id from localStorage.
+    If the session row is completed, returns needs_new_session=True (client should mint a new id).
     """
-    _sessions[session_id] = []
-    result = chat_turn(session_id, _sessions[session_id], "hello")
-    return result
+    if not is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
+        )
+
+    user_id = upsert_user_by_email(email)
+    row = get_chat_session(session_id, user_id)
+
+    if row and row["status"] == "completed":
+        return {"needs_new_session": True}
+
+    msgs = list(row["messages"]) if row else []
+    if row and row["status"] == "active" and len(msgs) > 0:
+        ui = history_to_ui_messages(msgs)
+        return {
+            "reply": last_assistant_reply(msgs),
+            "done": False,
+            "profile_id": None,
+            "messages": ui,
+            "resumed": True,
+        }
+
+    if row is None:
+        insert_chat_session(session_id, user_id)
+
+    history: list = []
+    result = chat_turn(session_id, history, "hello", user_id=user_id)
+    serialized = jsonify_chat_messages(history)
+    status = "completed" if result["done"] else "active"
+    profile_id = str(result["profile_id"]) if result.get("done") and result.get("profile_id") else None
+    save_chat_session(session_id, user_id, serialized, status=status, profile_id=profile_id)
+    ui = history_to_ui_messages(serialized)
+    return {**result, "messages": ui, "resumed": False}
 
 
 @router.post("/chat")
-def chat(req: ChatRequest):
-    """
-    Process one conversational turn.
-    Returns { reply, done, profile_id }.
-    When done=True, redirect the user to the match results page.
-    """
-    if req.session_id not in _sessions:
-        # Session expired or server restarted — restart gracefully
-        _sessions[req.session_id] = []
+def chat(req: ChatRequest, email: str = Depends(get_user_email)):
+    if not is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
+        )
 
-    history = _sessions[req.session_id]
-    result = chat_turn(req.session_id, history, req.message)
+    user_id = upsert_user_by_email(email)
+    row = get_chat_session(req.session_id, user_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown chat session. Open /onboarding again.")
+    if row["status"] == "completed":
+        raise HTTPException(status_code=400, detail="This onboarding chat is already completed.")
 
-    if result["done"]:
-        # Clean up session memory once profile is persisted
-        del _sessions[req.session_id]
-
+    history = list(row["messages"] or [])
+    result = chat_turn(req.session_id, history, req.message, user_id=user_id)
+    serialized = jsonify_chat_messages(history)
+    status = "completed" if result["done"] else "active"
+    profile_id = str(result["profile_id"]) if result.get("done") and result.get("profile_id") else None
+    save_chat_session(req.session_id, user_id, serialized, status=status, profile_id=profile_id)
     return result

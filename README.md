@@ -12,7 +12,7 @@ PKNIC-style **book club discovery**: users describe genre, goals, and cadence; t
 |--------|------|
 | UI | React 18, TypeScript, Vite, Tailwind, React Router |
 | API | Python 3.10+, FastAPI, Uvicorn |
-| Data | Supabase Postgres (`book_clubs`; service role used **only** on the server) |
+| Data | Supabase Postgres (`book_clubs`, `bookclub_users`, `chat_sessions`, `user_profiles`; service role **only** on the server) |
 
 ---
 
@@ -21,7 +21,8 @@ PKNIC-style **book club discovery**: users describe genre, goals, and cadence; t
 ```
 client/          # Vite app — `/` discovery, `/addBookClub` create
 server/          # FastAPI — `/api/*`, loads `server/.env`
-server/supabase_schema.sql   # Run once in Supabase SQL editor
+server/supabase_schema.sql           # Run once (book_clubs)
+server/supabase_onboarding_auth.sql  # Run once (users, profiles, chat_sessions)
 ```
 
 Legacy reference only (not used at runtime): `server/bookclub_data.py`, `server/bookclub_data.java`.
@@ -47,6 +48,7 @@ Legacy reference only (not used at runtime): `server/bookclub_data.py`, `server/
 3. **Supabase**
 
    - Run `server/supabase_schema.sql` in the **SQL Editor** (creates `book_clubs`).
+   - Run `server/supabase_onboarding_auth.sql` (creates `bookclub_users`, `user_profiles`, `chat_sessions` for persisted onboarding + email identity).
    - Copy `server/.env.example` → `server/.env` and set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` (service role — never commit, never expose to the browser).
 
 4. **Run** (two terminals)
@@ -89,6 +91,10 @@ Base URL (dev): `http://127.0.0.1:8000`
 | POST | `/api/recommendations` | Discovery: body `bookCode?`, `bookGenre`, `userGoal`, `cadence` → best match + `totalPreference` |
 | POST | `/api/bookclubs` | Create a club (`leader`, `genre`, `bookTitle`, `bookSummary`) |
 | GET | `/api/bookclubs` | List clubs (newest first) |
+| GET | `/api/onboarding/start/{session_id}` | Start or resume onboarding chat; header **`X-User-Email`** (normalized) required |
+| POST | `/api/onboarding/chat` | Body `{ session_id, message }`; same **`X-User-Email`** header |
+
+The web client stores **email** and **onboarding session id** in `localStorage` so chats survive tab close and API restarts until onboarding completes.
 
 **Current matching** (`server/recommendation.py`): combines genre overlap, goal text overlap vs club summary, optional boost if `bookCode` matches a club id. Score: `totalPreference = 0.3 × cadence + 0.5 × genreMatch` vs the chosen club’s genre.
 

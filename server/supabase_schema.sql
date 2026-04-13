@@ -16,3 +16,6 @@ create index if not exists book_clubs_created_at_idx on public.book_clubs (creat
 alter table public.book_clubs enable row level security;
 
 -- Service role bypasses RLS; if you add anon key from the client later, add policies here.
+
+-- Onboarding chat persistence + email identity + user_profiles:
+--   also run server/supabase_onboarding_auth.sql in the SQL Editor.

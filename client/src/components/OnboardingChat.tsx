@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
-
-// ── Types ────────────────────────────────────────────────────────────────────
+import { useEffect, useRef, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { STORAGE_ONBOARDING_SESSION } from "../lib/storageKeys";
 
 type Message = {
   role: "user" | "assistant";
@@ -8,14 +8,18 @@ type Message = {
 };
 
 type Props = {
+  email: string;
   sessionId: string;
-  /** Called with the saved profile_id once the agent finishes. */
+  onSessionIdChange: (id: string) => void;
   onComplete: (profileId: string) => void;
 };
 
-// ── Component ────────────────────────────────────────────────────────────────
-
-export default function OnboardingChat({ sessionId, onComplete }: Props) {
+export default function OnboardingChat({
+  email,
+  sessionId,
+  onSessionIdChange,
+  onComplete,
+}: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,27 +27,65 @@ export default function OnboardingChat({ sessionId, onComplete }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Load the agent's opening message when the component mounts
   useEffect(() => {
+    let cancelled = false;
+    setMessages([]);
+    setError(null);
     setLoading(true);
-    fetch(`/api/onboarding/start/${sessionId}`)
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to start session");
-        return r.json();
-      })
-      .then((data) => {
-        setMessages([{ role: "assistant", text: data.reply }]);
-      })
-      .catch(() => setError("Could not connect to the server. Is the API running?"))
-      .finally(() => setLoading(false));
-  }, [sessionId]);
 
-  // Auto-scroll to latest message
+    const headers = { "X-User-Email": email };
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/onboarding/start/${sessionId}`, { headers });
+        if (!res.ok) {
+          if (res.status === 401) {
+            throw new Error("Missing or invalid email. Add your email above.");
+          }
+          throw new Error("Failed to start session");
+        }
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.needs_new_session) {
+          const nid = uuidv4();
+          try {
+            localStorage.setItem(STORAGE_ONBOARDING_SESSION, nid);
+          } catch {
+            /* ignore */
+          }
+          onSessionIdChange(nid);
+          return;
+        }
+
+        if (Array.isArray(data.messages) && data.messages.length > 0) {
+          setMessages(
+            data.messages.map((m: { role: string; text: string }) => ({
+              role: m.role === "user" ? "user" : "assistant",
+              text: String(m.text ?? ""),
+            })),
+          );
+        } else {
+          setMessages([{ role: "assistant", text: String(data.reply ?? "") }]);
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Could not connect to the server. Is the API running?");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [email, sessionId, onSessionIdChange]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Focus input after assistant replies
   useEffect(() => {
     if (!loading) inputRef.current?.focus();
   }, [loading]);
@@ -60,7 +102,10 @@ export default function OnboardingChat({ sessionId, onComplete }: Props) {
     try {
       const res = await fetch("/api/onboarding/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Email": email,
+        },
         body: JSON.stringify({ session_id: sessionId, message: text }),
       });
 
@@ -70,10 +115,9 @@ export default function OnboardingChat({ sessionId, onComplete }: Props) {
       setMessages((prev) => [...prev, { role: "assistant", text: data.reply }]);
 
       if (data.done && data.profile_id) {
-        // Small delay so user reads the closing message before redirect
         setTimeout(() => onComplete(data.profile_id), 1400);
       }
-    } catch (err) {
+    } catch {
       setError("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
@@ -87,12 +131,9 @@ export default function OnboardingChat({ sessionId, onComplete }: Props) {
     }
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   return (
-    <div className="flex flex-col h-[500px] rounded-2xl border border-gray-200 bg-white overflow-hidden shadow-sm">
-      {/* Message list */}
-      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
+    <div className="flex h-[500px] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-5">
         {messages.map((m, i) => (
           <div
             key={i}
@@ -100,10 +141,10 @@ export default function OnboardingChat({ sessionId, onComplete }: Props) {
           >
             <div
               className={[
-                "max-w-[78%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed",
+                "max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
                 m.role === "user"
-                  ? "bg-indigo-600 text-white rounded-br-sm"
-                  : "bg-gray-100 text-gray-800 rounded-bl-sm",
+                  ? "rounded-br-sm bg-indigo-600 text-white"
+                  : "rounded-bl-sm bg-gray-100 text-gray-800",
               ].join(" ")}
             >
               {m.text}
@@ -111,29 +152,24 @@ export default function OnboardingChat({ sessionId, onComplete }: Props) {
           </div>
         ))}
 
-        {/* Typing indicator */}
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-gray-100 text-gray-400 px-4 py-3 rounded-2xl rounded-bl-sm">
+            <div className="rounded-2xl rounded-bl-sm bg-gray-100 px-4 py-3 text-gray-400">
               <span className="inline-flex gap-1">
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:0ms]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:150ms]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:300ms]" />
               </span>
             </div>
           </div>
         )}
 
-        {/* Error */}
-        {error && (
-          <p className="text-center text-xs text-red-500 py-1">{error}</p>
-        )}
+        {error && <p className="py-1 text-center text-xs text-red-500">{error}</p>}
 
         <div ref={bottomRef} />
       </div>
 
-      {/* Input bar */}
-      <div className="border-t border-gray-100 px-4 py-3 flex gap-2 bg-gray-50">
+      <div className="flex gap-2 border-t border-gray-100 bg-gray-50 px-4 py-3">
         <input
           ref={inputRef}
           value={input}
@@ -144,9 +180,10 @@ export default function OnboardingChat({ sessionId, onComplete }: Props) {
           className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-300 disabled:opacity-50"
         />
         <button
+          type="button"
           onClick={send}
           disabled={loading || !input.trim()}
-          className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-medium rounded-xl transition-colors"
+          className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-40"
         >
           Send
         </button>
