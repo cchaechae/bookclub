@@ -12,12 +12,18 @@ _server_dir = Path(__file__).resolve().parent
 load_dotenv(_server_dir / ".env")
 load_dotenv(_server_dir / ".env.local")  # optional override for local dev
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from bookclub_repository import insert_club, is_configured, list_clubs
-from recommendation import genre_match_score, pick_best_club, total_preference
+from onboarding_repository import (
+    fetch_profile_by_id,
+    normalize_email,
+    upsert_user_by_email,
+)
+from recommendation import genre_match_score, goal_match_score, pick_best_club
+from recommendation_semantic import pick_best_semantic_rag, user_profile_row_to_text
 from routers.onboarding import router as onboarding_router
 
 app = FastAPI(title="Bookclub API")
@@ -58,12 +64,13 @@ async def search_books(
 
 
 class RecommendationBody(BaseModel):
-    """POST /api/recommendations — PKNIC discovery form (match against DB catalog)."""
+    """POST /api/recommendations — discovery form + optional saved onboarding profile."""
 
     bookCode: str | None = None
     bookGenre: str = Field(min_length=1)
     userGoal: str = Field(min_length=1)
     cadence: float = Field(gt=0)
+    profileId: str | None = None
 
     @field_validator("cadence")
     @classmethod
@@ -85,11 +92,24 @@ class RecommendationResponse(BaseModel):
     userGoal: str
     cadence: float
     totalPreference: float
+    matchMode: str = "lexical"
 
 
 @app.post("/api/recommendations", response_model=RecommendationResponse)
-async def recommend(body: RecommendationBody) -> RecommendationResponse:
-    """Score and return best-matching club from Supabase-backed catalog."""
+async def recommend(
+    body: RecommendationBody,
+    x_user_email: str | None = Header(None, alias="X-User-Email"),
+) -> RecommendationResponse:
+    """
+    Match clubs using embedding similarity (RAG-style retrieval over catalog text).
+
+    When ``profileId`` is set, the saved onboarding profile and the discovery form
+    each contribute 50% of the semantic score vs. each club document. Without a
+    profile, the form alone drives the embedding score. Cadence is included in the
+    form text, not as a separate linear weight.
+
+    If OpenAI is unavailable, falls back to lexical genre+goal ranking.
+    """
     if not is_configured():
         raise HTTPException(
             status_code=503,
@@ -101,14 +121,54 @@ async def recommend(body: RecommendationBody) -> RecommendationResponse:
             status_code=400,
             detail="No book clubs yet. Add at least one on the Add book club page.",
         )
-    best = pick_best_club(
+
+    profile_text: str | None = None
+    if body.profileId and str(body.profileId).strip():
+        pid = str(body.profileId).strip()
+        row = fetch_profile_by_id(pid)
+        if row is None:
+            raise HTTPException(status_code=404, detail="profileId not found.")
+        uid = row.get("user_id")
+        if uid is not None:
+            if not x_user_email or not str(x_user_email).strip():
+                raise HTTPException(
+                    status_code=401,
+                    detail="X-User-Email header is required when using profileId for this profile.",
+                )
+            email = normalize_email(str(x_user_email))
+            if "@" not in email:
+                raise HTTPException(status_code=400, detail="Invalid X-User-Email.")
+            expected_uid = upsert_user_by_email(email)
+            if str(uid) != str(expected_uid):
+                raise HTTPException(
+                    status_code=403,
+                    detail="profileId does not belong to the signed-in email.",
+                )
+        profile_text = user_profile_row_to_text(row)
+
+    sem = pick_best_semantic_rag(
         clubs,
+        profile_text=profile_text,
         book_genre=body.bookGenre,
         user_goal=body.userGoal,
+        cadence=body.cadence,
         book_code=body.bookCode,
     )
-    g = genre_match_score(body.bookGenre, best["genre"])
-    tp = total_preference(body.cadence, g)
+    match_mode = "semantic"
+    if sem is not None:
+        best, tp = sem
+    else:
+        match_mode = "lexical"
+        best = pick_best_club(
+            clubs,
+            book_genre=body.bookGenre,
+            user_goal=body.userGoal,
+            book_code=body.bookCode,
+        )
+        g = genre_match_score(body.bookGenre, best["genre"])
+        og = goal_match_score(body.userGoal, best)
+        tp = 0.65 * g + 0.35 * og
+
     title = str(best["book"]["title"])
     leader = str(best["leader"])
     return RecommendationResponse(
@@ -121,6 +181,7 @@ async def recommend(body: RecommendationBody) -> RecommendationResponse:
         userGoal=body.userGoal,
         cadence=body.cadence,
         totalPreference=round(tp, 4),
+        matchMode=match_mode,
     )
 
 

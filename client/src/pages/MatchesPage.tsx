@@ -1,12 +1,24 @@
+import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { STORAGE_LAST_PROFILE_ID } from "../lib/storageKeys";
 
 /**
- * Shown after onboarding saves a profile. The recommendation agent can later
- * use profileId to personalize matches; for now we link back to Discovery.
+ * Shown after onboarding saves a profile. Persists profileId for discovery
+ * semantic matching (50/50 with the form).
  */
 export function MatchesPage() {
   const [params] = useSearchParams();
   const profileId = params.get("profileId");
+
+  useEffect(() => {
+    if (profileId) {
+      try {
+        localStorage.setItem(STORAGE_LAST_PROFILE_ID, profileId);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [profileId]);
 
   return (
     <main className="mx-auto max-w-lg px-4 py-12 text-center">

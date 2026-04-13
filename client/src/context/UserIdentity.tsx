@@ -7,7 +7,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { STORAGE_EMAIL, STORAGE_ONBOARDING_SESSION } from "../lib/storageKeys";
+import {
+  STORAGE_EMAIL,
+  STORAGE_LAST_PROFILE_ID,
+  STORAGE_ONBOARDING_SESSION,
+} from "../lib/storageKeys";
 
 type Ctx = {
   email: string | null;
@@ -45,6 +49,7 @@ export function UserIdentityProvider({ children }: { children: ReactNode }) {
   const clearEmail = useCallback(() => {
     localStorage.removeItem(STORAGE_EMAIL);
     localStorage.removeItem(STORAGE_ONBOARDING_SESSION);
+    localStorage.removeItem(STORAGE_LAST_PROFILE_ID);
     setEmailState(null);
   }, []);
 

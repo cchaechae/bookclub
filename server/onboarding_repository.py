@@ -118,3 +118,18 @@ def last_assistant_reply(history: list[dict[str, Any]]) -> str:
         if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip():
             return m["content"]
     return ""
+
+
+def fetch_profile_by_id(profile_id: str) -> dict[str, Any] | None:
+    """Load a saved onboarding profile row, or None if missing."""
+    c = get_client()
+    r = (
+        c.table("user_profiles")
+        .select("id, user_id, preferred_genres, reading_goal, cadence, freetext")
+        .eq("id", profile_id)
+        .limit(1)
+        .execute()
+    )
+    if not r.data:
+        return None
+    return r.data[0]

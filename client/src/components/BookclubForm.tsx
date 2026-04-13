@@ -1,6 +1,8 @@
 import { useId, useState, type FormEvent } from "react";
 import type { BookOption, RecommendationResponse } from "../lib/api";
 import { postRecommendation } from "../lib/api";
+import { useUserIdentity } from "../context/UserIdentity";
+import { STORAGE_LAST_PROFILE_ID } from "../lib/storageKeys";
 import {
   parseCadence,
   validateCadence,
@@ -14,9 +16,19 @@ type FieldErrors = {
   cadence?: string;
 };
 
+function readStoredProfileId(): string | null {
+  try {
+    const v = localStorage.getItem(STORAGE_LAST_PROFILE_ID);
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export function BookclubForm() {
   const formId = useId();
   const errSummaryId = `${formId}-errors`;
+  const { email } = useUserIdentity();
 
   const [book, setBook] = useState<BookOption | null>(null);
   const [bookGenre, setBookGenre] = useState("");
@@ -57,12 +69,21 @@ export function BookclubForm() {
 
     setPending(true);
     try {
-      const res = await postRecommendation({
-        bookCode: book?.id ?? null,
-        bookGenre: bookGenre.trim(),
-        userGoal: userGoal.trim(),
-        cadence,
-      });
+      const profileId = readStoredProfileId();
+      const headers: Record<string, string> = {};
+      if (email && profileId) {
+        headers["X-User-Email"] = email;
+      }
+      const res = await postRecommendation(
+        {
+          bookCode: book?.id ?? null,
+          bookGenre: bookGenre.trim(),
+          userGoal: userGoal.trim(),
+          cadence,
+          ...(profileId ? { profileId } : {}),
+        },
+        { headers },
+      );
       setSuccess(res);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Something went wrong.");
@@ -83,8 +104,10 @@ export function BookclubForm() {
           Bookclub discovery
         </h1>
         <p className="mt-2 text-stone-600">
-          Tell us your genre, goals, and cadence. We’ll match you with a club from our
-          catalog and score the fit.
+          Tell us your genre, goals, and cadence. We match you to a club from our catalog
+          using embeddings: if you finished onboarding on this browser, we blend your saved
+          profile and this form 50/50; otherwise we use this form alone (cadence is part
+          of the form text, not a separate score weight).
         </p>
       </header>
 
@@ -231,17 +254,26 @@ export function BookclubForm() {
               <dd className="mt-1 text-ink">{success.bookSummary}</dd>
             </div>
             <div className="flex justify-between gap-4 border-t border-stone-100 pt-3">
-              <dt className="text-stone-500">Total preference</dt>
+              <dt className="text-stone-500">Match score</dt>
               <dd className="font-mono text-lg font-semibold text-accent">
                 {success.totalPreference.toFixed(4)}
               </dd>
             </div>
             <p className="text-xs text-stone-500">
-              Formula:{" "}
-              <code className="rounded bg-stone-100 px-1">
-                0.3 × cadence + 0.5 × genre match
-              </code>{" "}
-              (genre match vs. this club’s genre).
+              {success.matchMode === "semantic" ? (
+                <>
+                  <span className="font-medium text-stone-700">Semantic match</span> — cosine
+                  similarity of each club to your text: 50% saved onboarding profile + 50%
+                  this form (or 100% form if no saved profile). Falls back to lexical ranking
+                  if OpenAI is unavailable.
+                </>
+              ) : (
+                <>
+                  <span className="font-medium text-stone-700">Lexical fallback</span> —{" "}
+                  <code className="rounded bg-stone-100 px-1">0.65×genre + 0.35×goal</code>{" "}
+                  vs. this club (no embedding call).
+                </>
+              )}
             </p>
           </dl>
         </section>

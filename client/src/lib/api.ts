@@ -5,6 +5,8 @@ export type RecommendationPayload = {
   bookGenre: string;
   userGoal: string;
   cadence: number;
+  /** Saved onboarding profile UUID; enables 50/50 profile + form embedding match. */
+  profileId?: string | null;
 };
 
 export type RecommendationResponse = {
@@ -17,6 +19,8 @@ export type RecommendationResponse = {
   userGoal: string;
   cadence: number;
   totalPreference: number;
+  /** semantic = embedding RAG over catalog; lexical = genre/goal fallback */
+  matchMode?: string;
 };
 
 export type CreateBookClubPayload = {
@@ -44,10 +48,14 @@ export async function fetchBooks(q: string): Promise<BookOption[]> {
 
 export async function postRecommendation(
   body: RecommendationPayload,
+  opts?: { headers?: Record<string, string> },
 ): Promise<RecommendationResponse> {
   const res = await fetch("/api/recommendations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...opts?.headers,
+    },
     body: JSON.stringify(body),
   });
   const text = await res.text();
