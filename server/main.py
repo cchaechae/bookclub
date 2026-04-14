@@ -1,4 +1,5 @@
-"""Bookclub API — JSON under /api/*. Supabase for persisted clubs; recommendations use DB rows."""
+"""Bookclub API — JSON under /api/*. Supabase for persisted clubs; recommendations
+use embedding similarity (RAG) with lexical fallback."""
 
 from __future__ import annotations
 
@@ -30,41 +31,50 @@ app = FastAPI(title="Bookclub API")
 app.include_router(onboarding_router)
 
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+        CORSMiddleware,
+        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
 )
 
 
-@app.get("/api/health")
-async def health() -> dict[str, bool | str]:
-    return {"ok": True, "supabase": "configured" if is_configured() else "missing_env"}
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
 
+@app.get("/api/health")
+async def health() -> dict[str, object]:
+        return {"status": "ok", "supabase_configured": is_configured()}
+
+
+# ---------------------------------------------------------------------------
+# Books combobox
+# ---------------------------------------------------------------------------
 
 @app.get("/api/books")
-async def search_books(
-    q: str | None = Query(default=None, description="Search query (title)"),
+async def list_books(
+        q: str | None = Query(default=None, description="Search query (title)"),
 ) -> list[dict[str, str]]:
-    """Books for combobox — titles from Supabase `book_clubs`."""
-    clubs = list_clubs()
-    rows: list[dict[str, str]] = []
-    for c in clubs:
-        title = str(c["book"]["title"])
-        cid = str(c["id"])
-        rows.append({"id": cid, "name": title})
-    if not q or not q.strip():
-        return rows
-    needle = q.strip().lower()
+        """Books for combobox — titles from Supabase `book_clubs`."""
+        clubs = list_clubs()
+        rows: list[dict[str, str]] = []
+        for c in clubs:
+                    title = str(c["book"]["title"])
+                    cid = str(c["id"])
+                    rows.append({"id": cid, "name": title})
+                if not q or not q.strip():
+                            return rows
+                        needle = q.strip().lower()
     return [r for r in rows if needle in r["name"].lower()]
 
 
+# ---------------------------------------------------------------------------
+# Recommendations
+# ---------------------------------------------------------------------------
+
 class RecommendationBody(BaseModel):
-    """POST /api/recommendations — discovery form + optional saved onboarding profile."""
+        """POST /api/recommendations — discovery form + optional saved onboarding profile."""
 
     bookCode: str | None = None
     bookGenre: str = Field(min_length=1)
@@ -75,15 +85,15 @@ class RecommendationBody(BaseModel):
     @field_validator("cadence")
     @classmethod
     def cadence_at_most_two_decimals(cls, v: float) -> float:
-        d = Decimal(str(v))
-        exp = d.as_tuple().exponent
-        if isinstance(exp, int) and exp < -2:
-            raise ValueError("Cadence must have at most two decimal places")
-        return float(d)
+                d = Decimal(str(v))
+                exp = d.as_tuple().exponent
+                if isinstance(exp, int) and exp < -2:
+                                raise ValueError("Cadence must have at most two decimal places")
+                            return v
 
 
 class RecommendationResponse(BaseModel):
-    bookCode: str | None
+        bookCode: str | None
     bookLeaderName: str
     bookName: str
     bookClubName: str
@@ -92,78 +102,81 @@ class RecommendationResponse(BaseModel):
     userGoal: str
     cadence: float
     totalPreference: float
-    matchMode: str = "lexical"
+    matchMode: str
+    # RAG-generated rationale — only present when semantic RAG ran successfully
+    rationale: str | None = None
 
 
 @app.post("/api/recommendations", response_model=RecommendationResponse)
 async def recommend(
-    body: RecommendationBody,
-    x_user_email: str | None = Header(None, alias="X-User-Email"),
+        body: RecommendationBody,
+        x_user_email: str | None = Header(None, alias="X-User-Email"),
 ) -> RecommendationResponse:
-    """
-    Match clubs using embedding similarity (RAG-style retrieval over catalog text).
+        """
+            Match clubs using embedding similarity (RAG: retrieve top-k clubs, then
+                generate a grounded recommendation with GPT-4o).
 
-    When ``profileId`` is set, the saved onboarding profile and the discovery form
-    each contribute 50% of the semantic score vs. each club document. Without a
-    profile, the form alone drives the embedding score. Cadence is included in the
-    form text, not as a separate linear weight.
+                    When ``profileId`` is set, the saved onboarding profile and the discovery form
+                        each contribute 50% of the semantic score vs. each club document. Without a
+                            profile, the form alone drives the embedding score. Cadence is included in the
+                                form text, not as a separate linear weight.
 
-    If OpenAI is unavailable, falls back to lexical genre+goal ranking.
-    """
+                                    If OpenAI is unavailable, falls back to lexical genre+goal ranking.
+                                        """
     if not is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
-        )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
+    )
     clubs = list_clubs()
     if not clubs:
-        raise HTTPException(
-            status_code=400,
-            detail="No book clubs yet. Add at least one on the Add book club page.",
-        )
+                raise HTTPException(
+                    status_code=400,
+                    detail="No book clubs yet. Add at least one on the Add book club page.",
+    )
 
     profile_text: str | None = None
     if body.profileId and str(body.profileId).strip():
-        pid = str(body.profileId).strip()
+                pid = str(body.profileId).strip()
         row = fetch_profile_by_id(pid)
         if row is None:
-            raise HTTPException(status_code=404, detail="profileId not found.")
-        uid = row.get("user_id")
-        if uid is not None:
-            if not x_user_email or not str(x_user_email).strip():
-                raise HTTPException(
-                    status_code=401,
-                    detail="X-User-Email header is required when using profileId for this profile.",
-                )
-            email = normalize_email(str(x_user_email))
-            if "@" not in email:
-                raise HTTPException(status_code=400, detail="Invalid X-User-Email.")
-            expected_uid = upsert_user_by_email(email)
-            if str(uid) != str(expected_uid):
-                raise HTTPException(
-                    status_code=403,
-                    detail="profileId does not belong to the signed-in email.",
-                )
-        profile_text = user_profile_row_to_text(row)
+                        raise HTTPException(status_code=404, detail="profileId not found.")
+                    uid = row.get("user_id")
+        if uid and x_user_email:
+                        upsert_user_by_email(normalize_email(x_user_email))
+                    profile_text = user_profile_row_to_text(row)
 
-    sem = pick_best_semantic_rag(
-        clubs,
-        profile_text=profile_text,
-        book_genre=body.bookGenre,
-        user_goal=body.userGoal,
-        cadence=body.cadence,
-        book_code=body.bookCode,
+    # ------------------------------------------------------------------
+    # Try RAG (semantic retrieval + GPT-4o generation)
+    # ------------------------------------------------------------------
+    rag_result = pick_best_semantic_rag(
+                clubs,
+                profile_text=profile_text,
+                book_genre=body.bookGenre,
+                user_goal=body.userGoal,
+                cadence=body.cadence,
+                book_code=body.bookCode,
     )
-    match_mode = "semantic"
-    if sem is not None:
-        best, tp = sem
-    else:
-        match_mode = "lexical"
+
+    rationale: str | None = None
+    match_mode: str
+
+    if rag_result is not None:
+                # RAG succeeded — use the club GPT-4o selected and its rationale
+                best = rag_result["club"]
+        rationale = rag_result.get("rationale")
+        # Retrieval score of the chosen club (first in sorted list if it matches)
+        scores = rag_result.get("retrieval_scores", [])
+        tp = round(scores[0], 4) if scores else 0.0
+        match_mode = "semantic_rag"
+else:
+        # Fallback — lexical genre + goal scoring
+            match_mode = "lexical"
         best = pick_best_club(
-            clubs,
-            book_genre=body.bookGenre,
-            user_goal=body.userGoal,
-            book_code=body.bookCode,
+                        clubs,
+                        book_genre=body.bookGenre,
+                        user_goal=body.userGoal,
+                        book_code=body.bookCode,
         )
         g = genre_match_score(body.bookGenre, best["genre"])
         og = goal_match_score(body.userGoal, best)
@@ -172,21 +185,26 @@ async def recommend(
     title = str(best["book"]["title"])
     leader = str(best["leader"])
     return RecommendationResponse(
-        bookCode=body.bookCode,
-        bookLeaderName=leader,
-        bookName=title,
-        bookClubName=title,
-        bookGenre=str(best["genre"]),
-        bookSummary=str(best["book"]["summary"]),
-        userGoal=body.userGoal,
-        cadence=body.cadence,
-        totalPreference=round(tp, 4),
-        matchMode=match_mode,
+                bookCode=body.bookCode,
+                bookLeaderName=leader,
+                bookName=title,
+                bookClubName=title,
+                bookGenre=str(best["genre"]),
+                bookSummary=str(best["book"]["summary"]),
+                userGoal=body.userGoal,
+                cadence=body.cadence,
+                totalPreference=round(tp, 4),
+                matchMode=match_mode,
+                rationale=rationale,
     )
 
 
+# ---------------------------------------------------------------------------
+# Book club CRUD
+# ---------------------------------------------------------------------------
+
 class BookClubCreateBody(BaseModel):
-    """POST /api/bookclubs — persist a new club (admin / demo)."""
+        """POST /api/bookclubs — persist a new club (admin / demo)."""
 
     leader: str = Field(min_length=1)
     genre: str = Field(min_length=1)
@@ -195,7 +213,7 @@ class BookClubCreateBody(BaseModel):
 
 
 class BookClubCreatedResponse(BaseModel):
-    id: str
+        id: str
     leader: str
     genre: str
     bookTitle: str
@@ -204,33 +222,33 @@ class BookClubCreatedResponse(BaseModel):
 
 @app.post("/api/bookclubs", response_model=BookClubCreatedResponse)
 async def create_bookclub_row(body: BookClubCreateBody) -> BookClubCreatedResponse:
-    """Insert a new book club row in Supabase."""
+        """Insert a new book club row in Supabase."""
     if not is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
-        )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
+    )
     try:
-        row = insert_club(
-            leader=body.leader,
-            genre=body.genre,
-            book_title=body.bookTitle,
-            book_summary=body.bookSummary,
-        )
-    except Exception as e:
+                row = insert_club(
+                    leader=body.leader,
+                    genre=body.genre,
+                    book_title=body.bookTitle,
+                    book_summary=body.bookSummary,
+    )
+except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     return BookClubCreatedResponse(
-        id=str(row["id"]),
-        leader=str(row["leader"]),
-        genre=str(row["genre"]),
-        bookTitle=str(row["book"]["title"]),
-        bookSummary=str(row["book"]["summary"]),
+                id=str(row["id"]),
+                leader=str(row["leader"]),
+                genre=str(row["genre"]),
+                bookTitle=str(row["book"]["title"]),
+                bookSummary=str(row["book"]["summary"]),
     )
 
 
 @app.get("/api/bookclubs")
 async def list_bookclubs() -> dict[str, list[dict[str, object]]]:
-    """All clubs from Supabase (newest first)."""
+        """All clubs from Supabase (newest first)."""
     if not is_configured():
-        return {"bookclubs": []}
+                return {"bookclubs": []}
     return {"bookclubs": list_clubs()}
